@@ -1,12 +1,20 @@
 import { useState } from "react";
+import { API_ORIGIN } from "../Services/api";
 
 export default function CourseForm({ onSubmit, initialData = {} }) {
     const [title, setTitle] = useState(initialData.title || "");
     const [description, setDescription] = useState(initialData.description || "");
     const [price, setPrice] = useState(initialData.price || "");
     const [thumbnail, setThumbnail] = useState(null);
+    const [thumbnailPreview, setThumbnailPreview] = useState(
+        initialData.thumbnail 
+            ? (initialData.thumbnail.startsWith('http') 
+                ? initialData.thumbnail 
+                : `${API_ORIGIN}${initialData.thumbnail}`)
+            : null
+    );
     const [modules, setModules] = useState(initialData.modules || []);
-    const [category, setCategory] = useState("programming"); // Default category
+    const [category, setCategory] = useState(initialData.category || "programming");
 
     const handleAddModule = () => {
         setModules([...modules, { title: "", lessons: [] }]);
@@ -64,12 +72,31 @@ export default function CourseForm({ onSubmit, initialData = {} }) {
                 placeholder="Course Price"
                 required
             />
-            <input
-                type="file"
-                accept="image/*"
-                onChange={(e) => setThumbnail(e.target.files[0])}
-                className="w-full border border-gray-300 rounded-md p-3"
-            />
+            <div>
+                <label className="block text-sm font-medium mb-2">Course Thumbnail</label>
+                {thumbnailPreview && (
+                    <img 
+                        src={thumbnailPreview} 
+                        alt="Thumbnail preview" 
+                        className="w-32 h-32 object-cover rounded-md mb-2"
+                    />
+                )}
+                <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                        const file = e.target.files[0];
+                        if (file) {
+                            setThumbnail(file);
+                            setThumbnailPreview(URL.createObjectURL(file));
+                        }
+                    }}
+                    className="w-full border border-gray-300 rounded-md p-3"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                    {initialData.thumbnail ? "Upload a new image to replace the current thumbnail" : "Upload a thumbnail image for your course"}
+                </p>
+            </div>
             <select
                 value={category}
                 onChange={(e) => setCategory(e.target.value)}

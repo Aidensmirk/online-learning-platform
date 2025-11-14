@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { createUserWithEmailAndPassword } from 'firebase/auth';
-import { setDoc, doc } from 'firebase/firestore';
-import { auth, db } from '../Services/firebase';
+import { signUpWithEmailPassword } from '../Services/authService';
 
 function Register() {
   const [email, setEmail] = useState('');
@@ -21,24 +19,33 @@ function Register() {
 
     setLoading(true);
     try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-      const user = userCredential.user;
-
-      await setDoc(doc(db, 'users', user.uid), {
-        email: user.email,
-        role: role,
-        createdAt: new Date(),
-        wishlist: [],
-        enrolledCourses: [],
-        completedCourses: [],
-        totalLearningHours: 0
-      });
-
+      await signUpWithEmailPassword(email, password, role, '');
       setSuccess('Sign up successful! Redirecting to login...');
       setTimeout(() => navigate('/login'), 2000);
     } catch (error) {
       console.error(error);
-      setError('Failed to sign up. Please try again.');
+      // Handle different error formats from Django
+      const errorData = error.response?.data;
+      let errorMessage = 'Failed to sign up. Please try again.';
+      
+      if (errorData) {
+        // Check for field-specific errors
+        if (errorData.email) {
+          errorMessage = Array.isArray(errorData.email) ? errorData.email[0] : errorData.email;
+        } else if (errorData.username) {
+          errorMessage = Array.isArray(errorData.username) ? errorData.username[0] : errorData.username;
+        } else if (errorData.password) {
+          errorMessage = Array.isArray(errorData.password) ? errorData.password[0] : errorData.password;
+        } else if (errorData.non_field_errors) {
+          errorMessage = Array.isArray(errorData.non_field_errors) ? errorData.non_field_errors[0] : errorData.non_field_errors;
+        } else if (errorData.message) {
+          errorMessage = errorData.message;
+        }
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+      
+      setError(errorMessage);
       setLoading(false);
     }
   };

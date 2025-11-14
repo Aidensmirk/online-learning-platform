@@ -18,17 +18,36 @@ const Login1 = () => {
 
     setLoading(true);
     try {
-      console.log('Attempting login with:', { email, password, role });
-      await signInWithEmailPassword(email, password);
-      console.log('Login successful, navigating to:', role === 'student' ? '/student-dashboard' : '/instructor-dashboard');
+      const user = await signInWithEmailPassword(email, password);
+      if (user?.role === 'admin') {
+        // Redirect admins to the Django admin panel
+        window.location.href = '/admin/';
+        return;
+      }
+      // Use selected role for navigation (user's actual role is in the database)
+      // Navigate based on selected role, but verify user has permission
       if (role === 'student') {
         navigate('/student-dashboard');
       } else if (role === 'instructor') {
-        navigate('/instructor-dashboard');
+        // Check if user is actually an instructor
+        if (user?.role === 'instructor') {
+          navigate('/instructor-dashboard');
+        } else {
+          setError('You do not have instructor access. Please select Student role.');
+          setLoading(false);
+          return;
+        }
+      } else {
+        // Default to student dashboard
+        navigate('/student-dashboard');
       }
     } catch (error) {
       console.error('Login failed:', error);
-      setError('Invalid credentials or user not found');
+      const errorMessage = error.response?.data?.non_field_errors?.[0] 
+        || error.response?.data?.message 
+        || error.message 
+        || 'Invalid credentials or user not found';
+      setError(errorMessage);
       setLoading(false);
     }
   };
@@ -107,6 +126,7 @@ const Login1 = () => {
             <option value="student">Student</option>
             <option value="instructor">Instructor</option>
           </select>
+          <p className="text-xs text-gray-500">Select your role to navigate to the correct dashboard</p>
           <button
             type="submit"
             disabled={loading}

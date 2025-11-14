@@ -1,636 +1,522 @@
-import { useState, useEffect } from "react";
-import { db, auth, storage } from "../Services/firebase";
-import { 
-  collection, 
-  addDoc, 
-  query, 
-  where, 
-  getDocs, 
-  deleteDoc, 
-  doc, 
-  updateDoc,
-  arrayUnion,
-  arrayRemove,
-  increment
-} from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
+import { useEffect, useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { Bar, Line } from "react-chartjs-2";
-import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, PointElement, LineElement } from 'chart.js';
+import {
+  Chart as ChartJS,
+  CategoryScale,
+  LinearScale,
+  BarElement,
+  Title,
+  Tooltip,
+  Legend,
+} from "chart.js";
+import { Bar } from "react-chartjs-2";
 import ErrorBoundary from "../components/ErrorBoundary";
-import CourseForm from "../components/CourseForm";
-import NotificationBell from "../components/NotificationBell";
-import axios from "axios";
+import {
+  coursesAPI,
+  modulesAPI,
+  analyticsAPI,
+} from "../Services/api";
+import { getCurrentUser } from "../Services/authService";
+import { useTheme } from "../context/ThemeContext";
+import PageLayout from "../components/PageLayout";
 
-// Register ChartJS components
-ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend, PointElement, LineElement);
+ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
-function Navbar() {
+export default function InstructorDashboard() {
+  const navigate = useNavigate();
+  const { darkMode, toggleDarkMode } = useTheme();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [user, setUser] = useState(null);
-  const navigate = useNavigate(); // Ensure useNavigate is imported
+  const [courses, setCourses] = useState([]);
+  const [modulesByCourse, setModulesByCourse] = useState({});
+  const [analyticsSummary, setAnalyticsSummary] = useState(null);
+  const [analyticsCourses, setAnalyticsCourses] = useState([]);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
+  const [analyticsError, setAnalyticsError] = useState("");
 
-  useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged((user) => {
-      setUser(user);
-    });
-    return unsubscribe;
-  }, []);
+  const summary = useMemo(() => {
+    const totalCourses = analyticsSummary?.total_courses ?? courses.length;
+    const totalModules = Object.values(modulesByCourse).reduce((sum, list) => sum + list.length, 0);
+    const totalLessons = Object.values(modulesByCourse).reduce(
+      (sum, list) => sum + list.reduce((acc, module) => acc + (module.lessons?.length || 0), 0),
+      0
+    );
+    return {
+      totalCourses,
+      totalModules,
+      totalLessons,
+      totalEnrollments: analyticsSummary?.total_enrollments ?? 0,
+      totalRevenue: analyticsSummary?.total_revenue ?? 0,
+      averageCompletionRate: analyticsSummary?.average_completion_rate ?? 0,
+    };
+  }, [courses, modulesByCourse, analyticsSummary]);
 
-  const handleSignOut = async () => {
+  const summaryCards = useMemo(
+    () => [
+      {
+        key: "courses",
+        title: "Courses",
+        value: summary.totalCourses,
+        hint: "Published & draft",
+        variant: "mint",
+        icon: (
+          <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3h8v4m-9 4h10M5 17h14" />
+          </svg>
+        ),
+      },
+      {
+        key: "modules",
+        title: "Modules",
+        value: summary.totalModules,
+        hint: "Across all courses",
+        variant: "amber",
+        icon: (
+          <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 8h18M3 16h18M4 12h16" />
+          </svg>
+        ),
+      },
+      {
+        key: "lessons",
+        title: "Lessons",
+        value: summary.totalLessons,
+        hint: "Ready to teach",
+        variant: "indigo",
+        icon: (
+          <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 10h16M4 14h10" />
+          </svg>
+        ),
+      },
+      {
+        key: "enrollments",
+        title: "Enrollments",
+        value: summary.totalEnrollments,
+        hint: "Students engaged",
+        variant: "mint",
+        icon: (
+          <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6a4 4 0 110 8m0 0a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+          </svg>
+        ),
+      },
+      {
+        key: "completion",
+        title: "Completion rate",
+        value: `${summary.averageCompletionRate.toFixed(1)}%`,
+        hint: "Average progress",
+        variant: "amber",
+        icon: (
+          <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6v6l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ),
+      },
+      {
+        key: "revenue",
+        title: "Revenue",
+        value: `$${summary.totalRevenue.toFixed(2)}`,
+        hint: "Lifetime earnings",
+        variant: "indigo",
+        icon: (
+          <svg className="h-8 w-8" viewBox="0 0 24 24" fill="none" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V6m0 12v-2" />
+          </svg>
+        ),
+      },
+    ],
+    [summary]
+  );
+
+  const quickActions = useMemo(
+    () => [
+      {
+        key: "manage",
+        title: "Manage courses",
+        description: "Edit modules, lessons, assignments, and quizzes.",
+        action: () => navigate("/manage-courses"),
+      },
+      {
+        key: "create",
+        title: "Create course",
+        description: "Start a brand new learning experience from scratch.",
+        action: () => navigate("/create-course"),
+      },
+      {
+        key: "profile",
+        title: "Profile & settings",
+        description: "Refresh your instructor bio and platform presence.",
+        action: () => navigate("/profile"),
+      },
+    ],
+    [navigate]
+  );
+
+  const analyticsData = useMemo(() => {
+    const labels = courses.map((course) => course.title);
+    const moduleCounts = courses.map((course) => modulesByCourse[course.id]?.length || 0);
+    const lessonCounts = courses.map((course) =>
+      (modulesByCourse[course.id] || []).reduce((acc, module) => acc + (module.lessons?.length || 0), 0)
+    );
+
+    return {
+      modulesChart: {
+        labels,
+        datasets: [
+          {
+            label: "Modules",
+            data: moduleCounts,
+            backgroundColor: "rgba(59, 130, 246, 0.6)",
+          },
+        ],
+      },
+      lessonsChart: {
+        labels,
+        datasets: [
+          {
+            label: "Lessons",
+            data: lessonCounts,
+            backgroundColor: "rgba(16, 185, 129, 0.6)",
+          },
+        ],
+      },
+    };
+  }, [courses, modulesByCourse]);
+
+  const ensureUser = async () => {
+    const stored = JSON.parse(localStorage.getItem("user") || "null");
+    if (stored) {
+      setUser(stored);
+      return stored;
+    }
     try {
-      await auth.signOut();
-      navigate("/login"); // Redirect to login page after logout
-    } catch (error) {
-      console.error("Sign out error:", error);
-      alert("Failed to log out. Please try again.");
+      const current = await getCurrentUser();
+      setUser(current);
+      return current;
+    } catch (err) {
+      navigate("/login");
+      throw err;
     }
   };
 
-  return (
-    <nav className="flex justify-between items-center p-4 bg-primary text-white shadow-md">
-      <div className="text-xl font-bold">
-        <Link to="/" className="hover:text-accent transition-colors duration-200">
-          Instructor Portal
-        </Link>
-      </div>
-      <div className="flex space-x-6 items-center">
-        <Link to="/instructor-dashboard" className="hover:text-accent transition-colors duration-200">
-          Dashboard
-        </Link>
-        <Link to="/create-course" className="hover:text-accent transition-colors duration-200">
-          Create Course
-        </Link>
-        <Link to="/manage-courses" className="hover:text-accent transition-colors duration-200">
-          Manage Courses
-        </Link>
-        <Link to="/profile" className="hover:text-accent transition-colors duration-200">
-          Profile
-        </Link>
-        <NotificationBell />
-        <button onClick={handleSignOut} className="hover:text-accent transition-colors duration-200">
-          Logout
-        </button>
-      </div>
-    </nav>
-  );
-}
+  const loadCourses = async (currentUser) => {
+    const response = await coursesAPI.getAll();
+    const list = Array.isArray(response) ? response : response.results || [];
+    const instructorCourses = list.filter(
+      (course) => course.instructor?.id === currentUser.id || currentUser.role === "admin"
+    );
+    setCourses(instructorCourses);
 
-export default function InstructorDashboard() {
-  const [courses, setCourses] = useState([]);
-  const [analytics, setAnalytics] = useState({
-    enrollments: { labels: [], datasets: [] },
-    revenue: { labels: [], datasets: [] },
-    completion: { labels: [], datasets: [] }
-  });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [notifications, setNotifications] = useState([]);
-  const [showArchived, setShowArchived] = useState(false);
-  const [showFilters, setShowFilters] = useState(false);
-  const [filters, setFilters] = useState({
-    category: "all",
-    status: "all",
-    rating: 0
-  });
-  const [darkMode, setDarkMode] = useState(false);
-  const [quickActions, setQuickActions] = useState([
-    { id: 1, title: "Create New Course", icon: "plus-circle", action: () => navigate("/create-course") },
-    { id: 2, title: "View Analytics", icon: "chart-bar", action: () => setShowAnalytics(true) },
-    { id: 3, title: "Manage Notifications", icon: "bell", action: () => setShowNotifications(true) }
-  ]);
-  const [showAnalytics, setShowAnalytics] = useState(false);
-  const [showNotifications, setShowNotifications] = useState(false);
-  const [dashboardSummary, setDashboardSummary] = useState({
-    totalCourses: 0,
-    totalStudents: 0,
-    totalRevenue: 0,
-    avgRating: 0
-  });
+    const moduleMap = {};
+    await Promise.all(
+      instructorCourses.map(async (course) => {
+        try {
+          const data = await modulesAPI.list({ course: course.id });
+          const moduleList = Array.isArray(data) ? data : data.results || [];
+          moduleMap[course.id] = moduleList;
+        } catch (err) {
+          moduleMap[course.id] = [];
+        }
+      })
+    );
+    setModulesByCourse(moduleMap);
+  };
+
+  const loadAnalytics = async () => {
+    try {
+      setAnalyticsLoading(true);
+      const data = await analyticsAPI.getInstructorSummary();
+      setAnalyticsSummary(data.summary || null);
+      setAnalyticsCourses(Array.isArray(data.courses) ? data.courses : []);
+      setAnalyticsError("");
+    } catch (err) {
+      console.error("Failed to load analytics", err);
+      const message =
+        err.response?.data?.detail ||
+        err.message ||
+        "Unable to load analytics right now.";
+      setAnalyticsError(message);
+    } finally {
+      setAnalyticsLoading(false);
+    }
+  };
 
   useEffect(() => {
-    const fetchData = async () => {
+    const init = async () => {
       try {
         setLoading(true);
-        await Promise.all([fetchCourses(), fetchAnalytics(), fetchDashboardSummary()]);
-      } catch (error) {
-        setError("Failed to load dashboard data");
+        const currentUser = await ensureUser();
+        if (!currentUser) return;
+        if (currentUser.role !== "instructor" && currentUser.role !== "admin") {
+          navigate("/");
+          return;
+        }
+        await loadCourses(currentUser);
+        await loadAnalytics();
+      } catch (err) {
+        setError("Failed to load dashboard data.");
       } finally {
         setLoading(false);
       }
     };
-
-    fetchData();
+    init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const fetchCourses = async () => {
-    try {
-      const q = query(
-        collection(db, "courses"),
-        where("instructorId", "==", auth.currentUser.uid)
-      );
-      const querySnapshot = await getDocs(q);
-      const coursesData = querySnapshot.docs.map(doc => ({
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="loader border-t-4 border-primary rounded-full w-12 h-12 animate-spin"></div>
+      </div>
+    );
+  }
 
-        id: doc.id,
-        ...doc.data(),
-        enrolledCount: doc.data().enrolledCount || 0,
-        modules: doc.data().modules || [],
-        rating: doc.data().rating || 4.5,
-        reviews: doc.data().reviews || []
-      }));
-      setCourses(coursesData);
-      setDashboardSummary(prev => ({
-        ...prev,
-        totalCourses: coursesData.length,
-        totalStudents: coursesData.reduce((total, course) => total + (course.enrolledCount || 0), 0)
-      }));
-    } catch (error) {
-      console.error("Error fetching courses:", error);
-      setError("Failed to load courses");
-    }
-  };
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gray-100">
+        <Navbar />
+        <div className="max-w-3xl mx-auto mt-10 bg-red-100 text-red-700 p-4 rounded-lg">
+          {error}
+        </div>
+      </div>
+    );
+  }
 
-  const fetchAnalytics = async () => {
-    try {
-      const coursesSnapshot = await getDocs(
-        query(collection(db, "courses"), where("instructorId", "==", auth.currentUser.uid))
-      );
-      const coursesData = coursesSnapshot.docs.map(doc => doc.data());
-
-      // Enrollment Analytics
-      const enrolledCounts = coursesData.map(course => course.enrolledCount || 0);
-      const courseTitles = coursesData.map(course => course.title);
-
-      // Revenue Analytics
-      const revenueData = coursesData.map(course => 
-        (course.price || 0) * (course.enrolledCount || 0)
-      );
-
-      // Completion Rate Analytics
-      const completionRates = coursesData.map(course => 
-        course.completedCount ? 
-          ((course.completedCount / course.enrolledCount) * 100).toFixed(0) : 
-          0
-      );
-
-      setAnalytics({
-        enrollments: {
-          labels: courseTitles,
-          datasets: [
-            {
-              label: "Enrolled Students",
-              data: enrolledCounts,
-              backgroundColor: "rgba(75, 192, 192, 0.6)",
-            },
-          ],
-        },
-        revenue: {
-          labels: courseTitles,
-          datasets: [
-            {
-              label: "Revenue ($)",
-              data: revenueData,
-              backgroundColor: "rgba(54, 162, 235, 0.6)",
-            },
-          ],
-        },
-        completion: {
-          labels: courseTitles,
-          datasets: [
-            {
-              label: "Completion Rate (%)",
-              data: completionRates,
-              backgroundColor: "rgba(255, 206, 86, 0.6)",
-            },
-          ],
-        }
-      });
-    } catch (error) {
-      console.error("Error fetching analytics data:", error);
-      setError("Failed to load analytics");
-    }
-  };
-
-  const fetchDashboardSummary = async () => {
-    try {
-      if (!auth.currentUser) {
-        console.error("User is not authenticated");
-        return;
-      }
-
-      const coursesSnapshot = await getDocs(
-        query(collection(db, "courses"), where("instructorId", "==", auth.currentUser.uid))
-      );
-      const coursesData = coursesSnapshot.docs.map(doc => doc.data());
-
-      const totalRevenue = coursesData.reduce((total, course) => 
-        total + (course.price || 0) * (course.enrolledCount || 0), 0
-      );
-
-      const avgRating = coursesData.reduce((sum, course) => 
-        sum + (course.rating || 4.5), 0
-      ) / (coursesData.length || 1);
-
-      setDashboardSummary({
-        totalCourses: coursesData.length,
-        totalStudents: coursesData.reduce((total, course) => total + (course.enrolledCount || 0), 0),
-        totalRevenue,
-        avgRating: avgRating.toFixed(1)
-      });
-    } catch (error) {
-      console.error("Error fetching dashboard summary:", error);
-    }
-  };
-
-  const handleCreateCourse = async ({ title, description, thumbnail, category, price, modules }) => {
-    try {
-      if (!category) {
-        throw new Error("Category is required");
-      }
-
-      let thumbnailURL = "";
-
-      // Upload thumbnail to Cloudinary
-      if (thumbnail) {
-        const formData = new FormData();
-        formData.append("file", thumbnail);
-        formData.append("upload_preset", "aidens books"); // Replace with your Cloudinary upload preset
-        formData.append("cloud_name", "dmi53zthk"); // Replace with your Cloudinary cloud name
-
-        const response = await axios.post(
-          "https://api.cloudinary.com/v1_1/dmi53zthk/image/upload", // Replace with your Cloudinary URL
-          formData
-        );
-
-        thumbnailURL = response.data.secure_url; // Get the uploaded image URL
-      }
-
-      // Add course to Firestore
-      await addDoc(collection(db, "courses"), {
-        title,
-        description,
-        instructorId: auth.currentUser.uid,
-        createdAt: new Date(),
-        thumbnailURL,
-        status: "draft",
-        category, // Ensure category is valid
-        price: parseFloat(price),
-        modules: modules || [],
-        enrolledCount: 0,
-        completedCount: 0,
-        rating: 4.5,
-        reviews: []
-      });
-
-      await fetchCourses();
-    } catch (error) {
-      console.error("Error creating course:", error);
-      setError(error.message || "Failed to create course");
-    }
-  };
-
-  const handleUpdateCourse = async (courseId, updates) => {
-    try {
-      const courseRef = doc(db, "courses", courseId);
-      await updateDoc(courseRef, updates);
-      await fetchCourses();
-    } catch (error) {
-      console.error("Error updating course:", error);
-      setError("Failed to update course");
-    }
-  };
-
-  const handleDeleteCourse = async (courseId) => {
-    try {
-      await deleteDoc(doc(db, "courses", courseId));
-      await fetchCourses();
-    } catch (error) {
-      console.error("Error deleting course:", error);
-      setError("Failed to delete course");
-    }
-  };
-
-  const fetchNotifications = async () => {
-    try {
-      const notificationsSnapshot = await getDocs(
-        query(
-          collection(db, "notifications"),
-          where("recipientId", "==", auth.currentUser.uid)
-        )
-      );
-      const notificationsData = notificationsSnapshot.docs.map(doc => ({
-
-        id: doc.id,
-        ...doc.data(),
-        read: doc.data().read || false
-      }));
-      setNotifications(notificationsData);
-    } catch (error) {
-      console.error("Error fetching notifications:", error);
-    }
-  };
-
-  const handleMarkAsRead = async (notificationId) => {
-    try {
-      await updateDoc(doc(db, "notifications", notificationId), {
-        read: true
-      });
-      await fetchNotifications();
-    } catch (error) {
-      console.error("Error marking notification as read:", error);
-    }
-  };
-
-  const handleDeleteNotification = async (notificationId) => {
-    try {
-      await deleteDoc(doc(db, "notifications", notificationId));
-      await fetchNotifications();
-    } catch (error) {
-      console.error("Error deleting notification:", error);
-    }
-  };
+  if (loading) {
+    return (
+      <PageLayout
+        eyebrow="Instructor hub"
+        title="Loading your workspace"
+        subtitle="We’re preparing your analytics and course data."
+      >
+        <div className="flex justify-center items-center py-24">
+          <div className="loader border-t-4 border-primary rounded-full w-12 h-12 animate-spin" />
+        </div>
+      </PageLayout>
+    );
+  }
 
   return (
-    <>
-      <Navbar />
-      
+    <PageLayout
+      eyebrow="Instructor hub"
+      title={`Welcome back${user ? `, ${user.display_name || user.username}` : ""}!`}
+      subtitle="Manage your courses, track performance trends, and keep learners engaged."
+      actions={
+        <button
+          onClick={toggleDarkMode}
+          className="px-4 py-2 rounded-full text-sm font-semibold bg-primary text-white hover:bg-primary-dark transition"
+        >
+          {darkMode ? "Light mode" : "Dark mode"}
+        </button>
+      }
+    >
       {error && (
-        <div className="bg-red-500 text-white p-4 text-center">
+        <div className="panel panel--soft border border-red-200/70 text-red-600 dark:border-red-400/30 dark:text-red-300 mb-6">
           {error}
         </div>
       )}
 
-      {loading ? (
-        <div className="flex justify-center items-center min-h-screen">
-          <div className="loader border-t-4 border-primary rounded-full w-12 h-12 animate-spin"></div>
+      <div className="flex flex-col gap-12">
+        <div className="panel-grid panel-grid--cols-3">
+          {summaryCards.map((card) => (
+            <SummaryCard key={card.key} {...card} />
+          ))}
         </div>
-      ) : (
-        <div className={`min-h-screen p-8 ${darkMode ? 'bg-gray-800 text-white' : 'bg-gradient-to-b from-gray-50 to-gray-200 text-gray-800'}`}>
-          <div className="max-w-4xl mx-auto ${darkMode ? 'bg-gray-900' : 'bg-white'} shadow-xl rounded-2xl p-8">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-3xl font-bold text-primary">Instructor Dashboard</h2>
-              <button 
-                onClick={() => setDarkMode(!darkMode)}
-                className="p-2 rounded hover:bg-gray-200 ${darkMode ? 'hover:bg-gray-700' : ''}"
-              >
-                {darkMode ? 'Light Mode' : 'Dark Mode'}
-              </button>
-            </div>
 
-            {/* Dashboard Summary */}
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-              <div className={`p-4 rounded-lg ${darkMode ? 'bg-blue-800' : 'bg-blue-100'} text-center`}>
-                <h4 className="text-lg font-semibold">Total Courses</h4>
-                <p className="text-2xl font-bold mt-2">{dashboardSummary.totalCourses}</p>
-              </div>
-              <div className={`p-4 rounded-lg ${darkMode ? 'bg-green-800' : 'bg-green-100'} text-center`}>
-                <h4 className="text-lg font-semibold">Total Students</h4>
-                <p className="text-2xl font-bold mt-2">{dashboardSummary.totalStudents}</p>
-              </div>
-              <div className={`p-4 rounded-lg ${darkMode ? 'bg-yellow-800' : 'bg-yellow-100'} text-center`}>
-                <h4 className="text-lg font-semibold">Total Revenue</h4>
-                <p className="text-2xl font-bold mt-2">${dashboardSummary.totalRevenue.toFixed(2)}</p>
-              </div>
-              <div className={`p-4 rounded-lg ${darkMode ? 'bg-purple-800' : 'bg-purple-100'} text-center`}>
-                <h4 className="text-lg font-semibold">Average Rating</h4>
-                <p className="text-2xl font-bold mt-2">
-                  {dashboardSummary.avgRating}
-                  <span className="text-yellow-500">★</span>
-                </p>
-              </div>
-            </div>
+        <div className="panel-grid panel-grid--cols-3">
+          {quickActions.map((action) => (
+            <QuickAction key={action.key} {...action} />
+          ))}
+        </div>
 
-            {/* Quick Actions */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-              {quickActions.map(action => (
-                <div 
-                  key={action.id}
-                  className={`p-4 rounded-lg flex items-center space-x-4 hover:bg-gray-100 ${darkMode ? 'hover:bg-gray-700' : ''}`}
-                  onClick={action.action}
-                >
-                  <div className={`p-3 rounded ${darkMode ? 'bg-gray-700' : 'bg-gray-100'}`}>
-                    <svg className="w-6 h-6 text-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d={`M12 11c0 3.517-1.009 6.799-2.753 9.571m5.642-5.704a1.12 1.12 0 00-1.98 0m-5.642-5.704a1.12 1.12 0 00-1.98 0m5.642-5.704a1.12 1.12 0 00-1.98 0m-3.521 16.942a1.12 1.12 0 01-1.98 0`}></path>
-                    </svg>
-                  </div>
-                  <span className="font-medium">{action.title}</span>
-                </div>
-              ))}
-            </div>
-
-            {/* Course Creation Form */}
-            <div className="mb-8">
-              <h3 className="text-xl font-semibold mb-4 text-primary">Create New Course</h3>
-              <CourseForm 
-                onSubmit={handleCreateCourse} 
-                onEdit={(courseId, updates) => handleUpdateCourse(courseId, updates)}
-              />
-            </div>
-
-            {/* Filters Section */}
-            <div className={`bg-gray-50 p-4 rounded-lg mb-6 ${darkMode ? 'bg-gray-800' : ''} ${showFilters ? 'block' : 'hidden'}`}>
-              <div className="flex items-center mb-4">
-                <span className="text-gray-500 mr-2">Category:</span>
-                <select
-                  value={filters.category}
-                  onChange={(e) => setFilters({ ...filters, category: e.target.value })}
-                  className={`border p-2 rounded ${darkMode ? 'bg-gray-700 text-white' : ''}`}
-                >
-                  <option value="all">All Categories</option>
-                  <option value="programming">Programming</option>
-                  <option value="design">Design</option>
-                  <option value="business">Business</option>
-                </select>
-              </div>
-              
-              <div className="flex items-center mb-4">
-                <span className="text-gray-500 mr-2">Status:</span>
-                <select
-                  value={filters.status}
-                  onChange={(e) => setFilters({ ...filters, status: e.target.value })}
-                  className={`border p-2 rounded ${darkMode ? 'bg-gray-700 text-white' : ''}`}
-                >
-                  <option value="all">All Statuses</option>
-                  <option value="draft">Draft</option>
-                  <option value="published">Published</option>
-                  <option value="archived">Archived</option>
-                </select>
-              </div>
-              
-              <div className="flex items-center">
-                <span className="text-gray-500 mr-2">Minimum Rating:</span>
-                <select
-                  value={filters.rating}
-                  onChange={(e) => setFilters({ ...filters, rating: parseInt(e.target.value) })}
-                  className={`border p-2 rounded ${darkMode ? 'bg-gray-700 text-white' : ''}`}
-                >
-                  <option value="0">All</option>
-                  <option value="3">3 Stars+</option>
-                  <option value="4">4 Stars+</option>
-                  <option value="4.5">4.5 Stars+</option>
-                </select>
-              </div>
-            </div>
-            
-            <button
-              onClick={() => setShowFilters(!showFilters)}
-              className={`text-primary hover:text-accent mb-6 ${darkMode ? 'text-blue-300 hover:text-blue-200' : ''}`}
-            >
-              {showFilters ? 'Hide Filters' : 'Show Filters'}
-            </button>
-
-            {/* Courses Grid */}
-            <h3 className="text-2xl font-semibold mb-4 text-primary">Your Courses</h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-              {courses
-                .filter(course => 
-                  (filters.category === "all" || course.category === filters.category) &&
-                  (filters.status === "all" || course.status === filters.status) &&
-                  (course.rating || 0) >= filters.rating
-                )
-                .map(course => (
-                  <div 
-                    key={course.id} 
-                    className={`bg-white rounded-xl shadow-md hover:shadow-lg transition duration-300 p-4 ${darkMode ? 'bg-gray-800 text-white' : ''}`}
-                  >
-                    {course.thumbnailURL && (
-                      <img
-                        src={course.thumbnailURL}
-                        alt={course.title}
-                        className="w-full h-40 object-cover rounded-lg mb-4"
-                      />
-                    )}
-                    <div className="flex justify-between items-start mb-2">
-                      <h4 className="text-xl font-bold">{course.title}</h4>
-                      <span 
-                        className={`text-xs px-2 py-1 rounded ${darkMode ? 'bg-gray-700' : ''} ${
-                          course.status === "draft" 
-                            ? darkMode ? "text-yellow-200" : "text-yellow-800 bg-yellow-100"
-                            : course.status === "published"
-                              ? darkMode ? "text-green-200" : "text-green-800 bg-green-100"
-                              : darkMode ? "text-gray-300" : "text-gray-700 bg-gray-200"
-                        }`}
-                      >
-                        {course.status.charAt(0).toUpperCase() + course.status.slice(1)}
-                      </span>
-                    </div>
-                    <p className={`${darkMode ? 'text-gray-300' : 'text-gray-600'} mt-2`}>{course.description}</p>
-                    <div className="flex justify-between mt-2">
-                      <span className={`${darkMode ? 'text-gray-300' : 'text-gray-500'}`}>
-                        {course.modules?.length || 0} Modules
-                      </span>
-                      <span className={`${darkMode ? 'text-gray-300' : 'text-gray-500'}`}>
-                        ${course.price || "Free"}
-                      </span>
-                    </div>
-                    <div className="flex justify-between items-center mt-3">
-                      <div className="flex space-x-2">
-                        <Link
-                          to={`/course-details/${course.id}`}
-                          className={`bg-primary text-white px-4 py-2 rounded hover:bg-primary-dark transition ${darkMode ? 'bg-blue-600 hover:bg-blue-700' : ''}`}
-                        >
-                          View Course
-                        </Link>
-                        <button
-                          onClick={() => handleDeleteCourse(course.id)}
-                          className={`bg-blue-500 text-white px-4 py-2 rounded hover:bg-gray-600 transition ${darkMode ? 'bg-red-600 hover:bg-red-700' : ''}`}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                      <div className="flex items-center space-x-4">
-                        <span className={`${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                          <i className="fas fa-users mr-1"></i>
-                          {course.enrolledCount || 0}
-                        </span>
-                        <span className={`${darkMode ? 'text-gray-300' : 'text-gray-600'}`}>
-                          <i className="fas fa-check-circle mr-1"></i>
-                          {course.completedCount || 0}
-                        </span>
-                        <span className={`${darkMode ? 'text-yellow-300' : 'text-yellow-500'}`}>
-                          <i className="fas fa-star mr-1"></i>
-                          {course.rating || 0}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-            </div>
-
-            {/* Analytics Section */}
-            <h3 className="text-xl font-bold mt-10 mb-4">Course Analytics</h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              <div className={`bg-white p-4 rounded-lg shadow ${darkMode ? 'bg-gray-800' : ''}`}>
-                <h4 className="text-lg font-semibold mb-2 text-primary">Enrollment Statistics</h4>
-                <ErrorBoundary>
-                  <Bar data={analytics.enrollments} />
-                </ErrorBoundary>
-              </div>
-              
-              <div className={`bg-white p-4 rounded-lg shadow ${darkMode ? 'bg-gray-800' : ''}`}>
-                <h4 className="text-lg font-semibold mb-2 text-primary">Revenue Overview</h4>
-                <ErrorBoundary>
-                  <Bar data={analytics.revenue} />
-                </ErrorBoundary>
-              </div>
-              
-              <div className={`bg-white p-4 rounded-lg shadow ${darkMode ? 'bg-gray-800' : ''}`}>
-                <h4 className="text-lg font-semibold mb-2 text-primary">Completion Rates</h4>
-                <ErrorBoundary>
-                  <Bar data={analytics.completion} />
-                </ErrorBoundary>
-              </div>
-            </div>
-
-            {/* Notifications Section */}
-            <h3 className="text-xl font-bold mt-10 mb-4">Notifications</h3>
-            <div className={`bg-white p-4 rounded-lg shadow ${darkMode ? 'bg-gray-800' : ''}`}>
-              {notifications.length === 0 ? (
-                <p className={`${darkMode ? 'text-gray-300' : 'text-gray-500'} text-center`}>No notifications yet</p>
-              ) : (
-                <ul>
-                  {notifications.map((notification, index) => (
-                    <li 
-                      key={index} 
-                      className={`flex justify-between items-start p-3 border-b ${darkMode ? 'border-gray-700' : ''} ${
-                        notification.read ? darkMode ? 'border-gray-700' : 'border-gray-200' : darkMode ? 'border-blue-600' : 'border-blue-500'
-                      }`}
-                    >
-                      <div>
-                        <h5 className={`font-medium mb-1 ${
-                          notification.read ? darkMode ? 'text-gray-300' : 'text-gray-600' : darkMode ? 'text-blue-300' : 'text-primary'
-                        }`}>
-                          {notification.title}
-                        </h5>
-                        <p className={`${darkMode ? 'text-gray-300' : 'text-gray-500'} text-sm`}>{notification.message}</p>
-                        <small className={`${darkMode ? 'text-gray-400' : 'text-gray-400'} mt-1 text-xs`}>
-                          {new Date(notification.timestamp?.toDate() || Date.now()).toLocaleString()}
-                        </small>
-                      </div>
-                      <div className="flex space-x-2 mt-2">
-                        {!notification.read && (
-                          <button
-                            onClick={() => handleMarkAsRead(notification.id)}
-                            className={`text-blue-500 hover:text-blue-700 text-sm ${darkMode ? 'text-blue-300 hover:text-blue-200' : ''}`}
-                          >
-                            Mark as read
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleDeleteNotification(notification.id)}
-                          className={`text-red-500 hover:text-red-700 text-sm ${darkMode ? 'text-red-300 hover:text-red-200' : ''}`}
-                        >
-                          Delete
-                        </button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
+        <section className="panel panel--soft space-y-6">
+          <div className="flex justify-between items-center">
+            <h3 className="text-2xl font-semibold text-primary">Your courses</h3>
+            <span className="text-sm text-gray-500 dark:text-gray-400">
+              Showing {courses.length} course{courses.length === 1 ? "" : "s"}
+            </span>
           </div>
-        </div>
-      )}
-    </>
+          {courses.length === 0 ? (
+            <div className="border border-dashed border-gray-300 dark:border-gray-700 rounded-lg p-6 text-center text-gray-500 dark:text-gray-400">
+              You haven’t published any courses yet. Start by creating a new course.
+            </div>
+          ) : (
+            <div className="panel-grid panel-grid--cols-2">
+              {courses.map((course) => {
+                const modules = modulesByCourse[course.id] || [];
+                const lessons = modules.reduce(
+                  (acc, module) => acc + (module.lessons?.length || 0),
+                  0
+                );
+                return (
+                  <article key={course.id} className="panel">
+                    <div className="flex items-start justify-between gap-4">
+                      <div>
+                        <h4 className="text-xl font-semibold text-primary">{course.title}</h4>
+                        <p className="mt-2 text-sm text-gray-600 dark:text-gray-300 line-clamp-3">
+                          {course.description}
+                        </p>
+                      </div>
+                      <span className="text-xs px-3 py-1 rounded-full bg-primary/10 text-primary font-medium">
+                        {course.status?.charAt(0).toUpperCase() + course.status?.slice(1) || "Draft"}
+                      </span>
+                    </div>
+                    <dl className="mt-4 grid grid-cols-3 gap-4 text-sm">
+                      <div>
+                        <dt className="font-medium text-gray-500 dark:text-gray-400">Modules</dt>
+                        <dd className="text-lg font-semibold text-gray-800 dark:text-white">{modules.length}</dd>
+                      </div>
+                      <div>
+                        <dt className="font-medium text-gray-500 dark:text-gray-400">Lessons</dt>
+                        <dd className="text-lg font-semibold text-gray-800 dark:text-white">{lessons}</dd>
+                      </div>
+                      <div>
+                        <dt className="font-medium text-gray-500 dark:text-gray-400">Price</dt>
+                        <dd className="text-lg font-semibold text-gray-800 dark:text-white">${course.price || 0}</dd>
+                      </div>
+                    </dl>
+                    <div className="mt-4 flex flex-wrap gap-3">
+                      <Link
+                        to={`/course-details/${course.id}`}
+                        className="rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-dark transition"
+                      >
+                        View details
+                      </Link>
+                      <Link
+                        to="/manage-courses"
+                        state={{ courseId: course.id }}
+                        className="rounded-full border border-primary px-4 py-2 text-sm font-semibold text-primary hover:bg-primary/10 transition"
+                      >
+                        Manage content
+                      </Link>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <section className="panel panel--soft space-y-6">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-xl font-semibold text-primary">Performance overview</h3>
+            {analyticsError && <span className="text-xs text-red-500">{analyticsError}</span>}
+          </div>
+
+          {analyticsLoading ? (
+            <div className="flex justify-center py-6">
+              <div className="loader border-t-4 border-primary rounded-full w-12 h-12 animate-spin" />
+            </div>
+          ) : analyticsCourses.length === 0 ? (
+            <div className="border border-dashed border-gray-300 rounded-lg py-12 text-center text-gray-500 dark:text-gray-400">
+              Analytics will appear once you have published courses and student activity.
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className={`min-w-full border rounded-lg ${darkMode ? "border-gray-700" : "border-gray-100"}`}>
+                <thead className={darkMode ? "bg-gray-800 text-gray-300" : "bg-gray-100 text-gray-600"}>
+                  <tr>
+                    <th className="px-4 py-3 text-left text-sm font-semibold">Course</th>
+                    <th className="px-4 py-3 text-left text-sm font-semibold">Status</th>
+                    <th className="px-4 py-3 text-right text-sm font-semibold">Enrollments</th>
+                    <th className="px-4 py-3 text-right text-sm font-semibold">Completion</th>
+                    <th className="px-4 py-3 text-right text-sm font-semibold">Avg quiz</th>
+                    <th className="px-4 py-3 text-right text-sm font-semibold">Assignments</th>
+                    <th className="px-4 py-3 text-right text-sm font-semibold">Revenue</th>
+                    <th className="px-4 py-3 text-right text-sm font-semibold">Updated</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {analyticsCourses.map((course) => (
+                    <tr
+                      key={`analytics-${course.id}`}
+                      className={`${darkMode ? "border-b border-gray-700" : "border-b border-gray-100"} hover:bg-primary/5 transition`}
+                    >
+                      <td className="px-4 py-3 text-sm font-medium text-primary">{course.title}</td>
+                      <td className="px-4 py-3 text-xs">
+                        <span
+                          className={`px-2 py-1 rounded-full ${
+                            course.status === "published"
+                              ? "bg-green-500/10 text-green-600"
+                              : course.status === "draft"
+                              ? "bg-yellow-500/10 text-yellow-600"
+                              : "bg-gray-500/10 text-gray-500"
+                          }`}
+                        >
+                          {course.status?.charAt(0).toUpperCase() + course.status?.slice(1)}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-sm text-right">{course.enrollments}</td>
+                      <td className="px-4 py-3 text-sm text-right">{course.completion_rate}%</td>
+                      <td className="px-4 py-3 text-sm text-right">{course.average_quiz_score}%</td>
+                      <td className="px-4 py-3 text-sm text-right">{course.assignment_submissions}</td>
+                      <td className="px-4 py-3 text-sm text-right">${course.revenue.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-xs text-right text-gray-500">
+                        {course.updated_at ? new Date(course.updated_at).toLocaleDateString() : "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
+
+        <section className="panel panel--soft space-y-6">
+          <h3 className="text-xl font-semibold text-primary">Course analytics</h3>
+          {courses.length === 0 ? (
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              Analytics will appear once you have at least one course.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <div className={`${darkMode ? "bg-gray-900" : "bg-gray-50"} rounded-xl p-4 shadow`}>
+                <h4 className="font-semibold mb-2 text-primary">Modules per course</h4>
+                <ErrorBoundary>
+                  <Bar data={analyticsData.modulesChart} />
+                </ErrorBoundary>
+              </div>
+              <div className={`${darkMode ? "bg-gray-900" : "bg-gray-50"} rounded-xl p-4 shadow`}>
+                <h4 className="font-semibold mb-2 text-primary">Lessons per course</h4>
+                <ErrorBoundary>
+                  <Bar data={analyticsData.lessonsChart} />
+                </ErrorBoundary>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="panel panel--soft">
+          <h3 className="text-xl font-semibold text-primary mb-2">Notifications</h3>
+          <p className="text-sm text-gray-500 dark:text-gray-400">
+            Notifications and messaging will appear here once configured. Stay tuned!
+          </p>
+        </section>
+      </div>
+    </PageLayout>
   );
 }
+
+const SummaryCard = ({ title, value, hint, icon, variant }) => (
+  <div className={`stat-card stat-card--${variant}`}>
+    <div className="stat-card__icon">{icon}</div>
+    <h3>{value}</h3>
+    <span>{title}</span>
+    <p>{hint}</p>
+  </div>
+);
+
+const QuickAction = ({ title, description, action }) => (
+  <div className="panel panel--soft flex flex-col gap-3">
+    <h4 className="text-lg font-semibold text-primary">{title}</h4>
+    <p className="text-sm text-gray-600 dark:text-gray-300">{description}</p>
+    <button
+      onClick={action}
+      className="mt-auto self-start rounded-full bg-primary px-4 py-2 text-sm font-semibold text-white hover:bg-primary-dark transition"
+    >
+      Open
+    </button>
+  </div>
+);

@@ -1,39 +1,36 @@
 import React from 'react';
-import { db, storage } from '../Services/firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
-import { collection, addDoc } from 'firebase/firestore';
-import { auth } from '../Services/firebase';
+import { coursesAPI } from '../Services/api';
 import CourseForm from "../components/CourseForm";
+import Navbar from "../components/Navbar";
 
 export default function CreateCourse() {
-    const handleCreateCourse = async ({ title, description, thumbnail }) => {
-        let thumbnailURL = "";
-        if (thumbnail) {
-            const storageRef = ref(storage, `course-thumbnails/${thumbnail.name}-${Date.now()}`);
-            await uploadBytes(storageRef, thumbnail);
-            thumbnailURL = await getDownloadURL(storageRef);
-        }
-
+    const handleCreateCourse = async ({ title, description, thumbnail, price, category }) => {
         try {
-            await addDoc(collection(db, "courses"), {
+            const courseData = {
                 title,
                 description,
-                instructorId: auth.currentUser.uid,
-                createdAt: new Date(),
-                thumbnailURL,
+                thumbnail: thumbnail || null,
+                price: price || 0,
+                category: category || '',
                 status: "draft",
-            });
+            };
+            await coursesAPI.create(courseData);
+            alert('Course created successfully!');
         } catch (error) {
             console.error("Error creating course: ", error);
+            alert('Failed to create course. Please try again.');
         }
     };
 
     return (
-        <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-200 p-8">
-            <div className="max-w-4xl mx-auto bg-white shadow-xl rounded-2xl p-8">
-                <h2 className="text-3xl font-bold mb-6 text-primary text-center">Create a New Course</h2>
-                <CourseForm onSubmit={handleCreateCourse} />
+        <>
+            <Navbar />
+            <div className="min-h-screen bg-gradient-to-b from-gray-50 to-gray-200 p-8">
+                <div className="max-w-4xl mx-auto bg-white shadow-xl rounded-2xl p-8">
+                    <h2 className="text-3xl font-bold mb-6 text-primary text-center">Create a New Course</h2>
+                    <CourseForm onSubmit={handleCreateCourse} />
+                </div>
             </div>
-        </div>
+        </>
     );
 }
